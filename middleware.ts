@@ -22,7 +22,12 @@ const html = (body: string, status = 200) =>
   });
 
 const redirect = (request: Request, pathname: string) =>
-  Response.redirect(new URL(pathname, request.url), 303);
+  new Response(null, {
+    status: 303,
+    headers: {
+      Location: new URL(pathname, request.url).toString(),
+    },
+  });
 
 const timingSafeEqual = (left: string, right: string) => {
   if (left.length !== right.length) {
