@@ -2,11 +2,10 @@ const LOGIN_USERNAME =
   process.env.LOGIN_USERNAME ?? process.env.BASIC_AUTH_USER;
 const LOGIN_PASSWORD =
   process.env.LOGIN_PASSWORD ?? process.env.BASIC_AUTH_PASSWORD;
-const LOGIN_SESSION_SECRET =
-  process.env.LOGIN_SESSION_SECRET ?? LOGIN_PASSWORD ?? "";
+const LOGIN_SESSION_SECRET = process.env.LOGIN_SESSION_SECRET;
 
 const COOKIE_NAME = "__Host-excalidraw_session";
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 const encoder = new TextEncoder();
 
 export const config = {
@@ -51,7 +50,7 @@ const base64UrlEncode = (bytes: ArrayBuffer) => {
 const sign = async (payload: string) => {
   const key = await crypto.subtle.importKey(
     "raw",
-    encoder.encode(LOGIN_SESSION_SECRET),
+    encoder.encode(LOGIN_SESSION_SECRET ?? ""),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -101,6 +100,22 @@ const getCookie = (request: Request, name: string) => {
     ?.slice(prefix.length);
 };
 
+const setCookie = (
+  response: Response,
+  name: string,
+  value: string,
+  maxAgeSeconds: number,
+) => {
+  response.headers.append(
+    "Set-Cookie",
+    `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`,
+  );
+};
+
+const clearCookie = (response: Response, name: string) => {
+  setCookie(response, name, "", 0);
+};
+
 const getSafeNextPath = (request: Request) => {
   const requestUrl = new URL(request.url);
   const next = requestUrl.searchParams.get("next");
@@ -112,13 +127,14 @@ const getSafeNextPath = (request: Request) => {
   return next;
 };
 
-const loginPage = (request: Request, error = false) => {
+const loginPage = (request: Request, message = "", status = 200) => {
   const next = getSafeNextPath(request);
-  const errorMarkup = error
-    ? '<p class="error" role="alert">Invalid username or password.</p>'
+  const errorMarkup = message
+    ? `<p class="error" role="alert">${message}</p>`
     : "";
 
-  return html(`<!doctype html>
+  return html(
+    `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -236,8 +252,90 @@ const loginPage = (request: Request, error = false) => {
       </form>
     </main>
   </body>
-</html>`);
+</html>`,
+    status,
+  );
 };
+
+const logoutPage = () =>
+  html(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign out</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #f8f7fb;
+        color: #1f1f29;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        margin: 0;
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      main {
+        background: #ffffff;
+        border: 1px solid #dedbe8;
+        border-radius: 8px;
+        box-shadow: 0 18px 60px rgb(31 31 41 / 10%);
+        max-width: 400px;
+        padding: 32px;
+        width: 100%;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+        line-height: 1.2;
+        margin: 0 0 8px;
+      }
+
+      p {
+        color: #6b6878;
+        margin: 0 0 24px;
+      }
+
+      button {
+        background: #6965db;
+        border: 0;
+        border-radius: 6px;
+        color: #ffffff;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+        padding: 12px;
+        width: 100%;
+      }
+
+      button:focus {
+        outline: 3px solid rgb(105 101 219 / 30%);
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sign out</h1>
+      <p>This will end your Excalidraw session on this browser.</p>
+      <form method="post" action="/logout">
+        <button type="submit">Sign out</button>
+      </form>
+    </main>
+  </body>
+</html>`);
 
 const login = async (request: Request) => {
   const body = new URLSearchParams(await request.text());
@@ -250,24 +348,23 @@ const login = async (request: Request) => {
   ) {
     const response = redirect(request, getSafeNextPath(request));
 
-    response.headers.set(
-      "Set-Cookie",
-      `${COOKIE_NAME}=${await createSession()}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`,
+    setCookie(
+      response,
+      COOKIE_NAME,
+      await createSession(),
+      SESSION_MAX_AGE_SECONDS,
     );
 
     return response;
   }
 
-  return loginPage(request, true);
+  return loginPage(request, "Invalid username or password.", 401);
 };
 
 const logout = (request: Request) => {
   const response = redirect(request, "/login");
 
-  response.headers.set(
-    "Set-Cookie",
-    `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
-  );
+  clearCookie(response, COOKIE_NAME);
 
   return response;
 };
@@ -287,11 +384,15 @@ export default async function middleware(request: Request) {
     return login(request);
   }
 
-  if (pathname === "/logout") {
+  if (pathname === "/logout" && request.method === "POST") {
     return logout(request);
   }
 
   if (await isValidSession(getCookie(request, COOKIE_NAME))) {
+    if (pathname === "/logout" && request.method === "GET") {
+      return logoutPage();
+    }
+
     return;
   }
 
