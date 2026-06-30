@@ -1,4 +1,4 @@
-import { del, get, put } from "@vercel/blob";
+const { del, get, put } = require("@vercel/blob");
 
 type RequestBody = string | Record<string, unknown> | undefined;
 
@@ -18,7 +18,7 @@ type SceneResponse = {
 const SCENE_BLOB_PATH = "excalidraw/scenes/default.json";
 const MAX_SCENE_BYTES = 20 * 1024 * 1024;
 
-export const config = {
+const config = {
   api: {
     bodyParser: {
       sizeLimit: "20mb",
@@ -55,10 +55,7 @@ const readRequestBody = async (request: SceneRequest) => {
   return Buffer.concat(chunks).toString("utf8");
 };
 
-export default async function handler(
-  request: SceneRequest,
-  response: SceneResponse,
-) {
+async function handler(request: SceneRequest, response: SceneResponse) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return json(response, 500, {
       error: "BLOB_READ_WRITE_TOKEN is not configured",
@@ -149,3 +146,6 @@ export default async function handler(
   response.setHeader("Cache-Control", "no-store");
   response.end();
 }
+
+module.exports = handler;
+module.exports.config = config;
