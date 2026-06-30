@@ -120,6 +120,7 @@ import {
   importFromLocalStorage,
   importUsernameFromLocalStorage,
 } from "./data/localStorage";
+import { loadRemoteScene, saveRemoteScene } from "./data/remoteScene";
 
 import { loadFilesFromFirebase } from "./data/firebase";
 import {
@@ -211,6 +212,25 @@ const shareableLinkConfirmDialog = {
   actionLabel: t("overwriteConfirm.modal.shareableLink.button"),
   color: "danger",
 } as const;
+
+const saveRemoteSceneDebounced = debounce(
+  async (
+    elements: readonly OrderedExcalidrawElement[],
+    appState: AppState,
+    files: BinaryFiles,
+    excalidrawAPI: ExcalidrawImperativeAPI | null,
+  ) => {
+    try {
+      await saveRemoteScene(elements, appState, files);
+    } catch (error: any) {
+      console.error(error);
+      excalidrawAPI?.setToast({
+        message: error?.message || "Failed to save remote scene.",
+      });
+    }
+  },
+  1500,
+);
 
 const initializeScene = async (opts: {
   collabAPI: CollabAPI | null;
@@ -321,6 +341,31 @@ const initializeScene = async (opts: {
         },
         isExternalScene,
       };
+    }
+  }
+
+  if (!isExternalScene && !externalUrlMatch) {
+    try {
+      const remoteScene = await loadRemoteScene();
+
+      if (remoteScene) {
+        return {
+          scene: {
+            ...remoteScene,
+            elements: restoreElements(remoteScene.elements, null, {
+              repairBindings: true,
+              deleteInvisibleElements: true,
+            }),
+            appState: restoreAppState(
+              remoteScene.appState,
+              localDataState?.appState,
+            ),
+          },
+          isExternalScene: false,
+        };
+      }
+    } catch (error: any) {
+      console.error(error);
     }
   }
 
@@ -617,11 +662,13 @@ const ExcalidrawWrapper = () => {
 
     const onUnload = () => {
       LocalData.flushSave();
+      saveRemoteSceneDebounced.flush();
     };
 
     const visibilityChange = (event: FocusEvent | Event) => {
       if (event.type === EVENT.BLUR || document.hidden) {
         LocalData.flushSave();
+        saveRemoteSceneDebounced.flush();
       }
       if (
         event.type === EVENT.VISIBILITY_CHANGE ||
@@ -652,6 +699,7 @@ const ExcalidrawWrapper = () => {
   useEffect(() => {
     const unloadHandler = (event: BeforeUnloadEvent) => {
       LocalData.flushSave();
+      saveRemoteSceneDebounced.flush();
 
       if (
         excalidrawAPI &&
@@ -713,6 +761,10 @@ const ExcalidrawWrapper = () => {
           }
         }
       });
+    }
+
+    if (!isTestEnv() && !collabAPI?.isCollaborating()) {
+      saveRemoteSceneDebounced(elements, appState, files, excalidrawAPI);
     }
 
     // Render the debug scene if the debug canvas is available
